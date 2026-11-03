@@ -31,8 +31,12 @@ class MainActivity : ComponentActivity() {
     private val adapter: BluetoothAdapter? by lazy {
         getSystemService(BluetoothAdapter::class.java)
     }
+    private var permissionResultAction: (() -> Unit)? = null
     private val permissionRequest =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            permissionResultAction?.invoke()
+            permissionResultAction = null
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,14 +44,24 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 EvDoctorScreen(
                     bondedDevices = { listBondedDevices() },
-                    askPermissions = { requestBluetoothPermissions() },
+                    askPermissions = { onResult -> requestBluetoothPermissions(onResult) },
                     connect = { device -> connectAndProbe(device) }
                 )
             }
         }
     }
 
-    private fun requestBluetoothPermissions() {
+    private fun requestBluetoothPermissions(onResult: () -> Unit) {
+        val permission = if (Build.VERSION.SDK_INT >= 31) {
+            Manifest.permission.BLUETOOTH_CONNECT
+        } else {
+            Manifest.permission.ACCESS_FINE_LOCATION
+        }
+        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
+            onResult()
+            return
+        }
+        permissionResultAction = onResult
         val requested = if (Build.VERSION.SDK_INT >= 31) {
             arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
         } else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -108,7 +122,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun EvDoctorScreen(
     bondedDevices: () -> List<BluetoothDevice>,
-    askPermissions: () -> Unit,
+    askPermissions: (() -> Unit) -> Unit,
     connect: suspend (BluetoothDevice) -> String
 ) {
     var devices by remember { mutableStateOf(emptyList<BluetoothDevice>()) }
@@ -139,11 +153,12 @@ private fun EvDoctorScreen(
             }
             item {
                 Button(onClick = {
-                    askPermissions()
-                    devices = bondedDevices()
-                    status = if (devices.isEmpty()) {
-                        "Сопряжённые устройства не найдены. Разрешите Bluetooth и сначала выполните сопряжение адаптера в настройках телефона."
-                    } else "Найдено устройств: ${devices.size}. Выберите адаптер."
+                    askPermissions {
+                        devices = bondedDevices()
+                        status = if (devices.isEmpty()) {
+                            "Сопряжённые устройства не найдены. Проверьте разрешение «Устройства поблизости» и сопряжение CHX в настройках Bluetooth телефона."
+                        } else "Найдено устройств: ${devices.size}. Выберите адаптер."
+                    }
                 }) { Text("Обновить устройства") }
             }
             item { Text("СОПРЯЖЁННЫЕ АДАПТЕРЫ", style = MaterialTheme.typography.titleMedium) }
